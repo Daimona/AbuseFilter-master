@@ -19,7 +19,7 @@ class AbuseFilterViewImport extends AbuseFilterView {
 				'type' => 'textarea',
 			]
 		];
-		HTMLForm::factory( 'ooui', $formDescriptor, $this->getContext() )
+		$htmlform = HTMLForm::factory( 'ooui', $formDescriptor, $this->getContext() )
 			->setSubmitTextMsg( 'abusefilter-import-submit' )
 			->setAction( $url )
 			->show();

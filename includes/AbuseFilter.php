@@ -269,7 +269,7 @@ class AbuseFilter {
 	 * @param User $user
 	 * @return AbuseFilterVariableHolder
 	 */
-	public static function generateUserVars( User $user ) {
+	public static function generateUserVars( $user ) {
 		$vars = new AbuseFilterVariableHolder;
 
 		$vars->setLazyLoadVar(
@@ -483,10 +483,9 @@ class AbuseFilter {
 
 	/**
 	 * @param string $expr
-	 * @param array $vars
 	 * @return string
 	 */
-	public static function evaluateExpression( $expr, $vars = [] ) {
+	public static function evaluateExpression( $expr ) {
 		global $wgAbuseFilterParserClass;
 
 		if ( self::checkSyntax( $expr ) !== true ) {
@@ -494,7 +493,7 @@ class AbuseFilter {
 		}
 
 		/** @var $parser AbuseFilterParser */
-		$parser = new $wgAbuseFilterParserClass( $vars );
+		$parser = new $wgAbuseFilterParserClass;
 
 		return $parser->evaluateExpression( $expr );
 	}
@@ -507,7 +506,7 @@ class AbuseFilter {
 	 * @throws Exception
 	 */
 	public static function checkConditions(
-		$conds, AbuseFilterVariableHolder $vars, $ignoreError = true
+		$conds, $vars, $ignoreError = true
 	) {
 		global $wgAbuseFilterParserClass;
 
@@ -540,15 +539,15 @@ class AbuseFilter {
 	 *
 	 * @param AbuseFilterVariableHolder $vars
 	 * @param string $group The filter's group (as defined in $wgAbuseFilterValidGroups)
-	 * @param Title $title
+	 * @param Title|null $title
 	 * @param string $mode 'execute' for edits and logs, 'stash' for cached matches
 	 *
 	 * @return bool[] Map of (integer filter ID => bool)
 	 */
 	public static function checkAllFilters(
-		AbuseFilterVariableHolder $vars,
+		$vars,
 		$group = 'default',
-		Title $title,
+		Title $title = null,
 		$mode = 'execute'
 	) {
 		global $wgAbuseFilterCentralDB, $wgAbuseFilterIsCentral;
@@ -622,7 +621,7 @@ class AbuseFilter {
 			}
 		}
 
-		if ( self::$condCount > $wgAbuseFilterConditionLimit ) {
+		if ( $title instanceof Title && self::$condCount > $wgAbuseFilterConditionLimit ) {
 			$actionID = implode( '-', [
 				$title->getPrefixedText(),
 				$vars->getVar( 'user_name' )->toString(),
@@ -642,15 +641,15 @@ class AbuseFilter {
 	/**
 	 * @param stdClass $row
 	 * @param AbuseFilterVariableHolder $vars
-	 * @param Title $title
+	 * @param Title|null $title
 	 * @param string $prefix
 	 * @param string $mode 'execute' for edits and logs, 'stash' for cached matches
 	 * @return bool
 	 */
 	public static function checkFilter(
 		$row,
-		AbuseFilterVariableHolder $vars,
-		Title $title,
+		$vars,
+		Title $title = null,
 		$prefix = '',
 		$mode = 'execute'
 	) {
@@ -705,18 +704,20 @@ class AbuseFilter {
 	 * @param float $runtime
 	 * @param int $totalConditions
 	 * @param bool $matched
-	 * @param Title $title
+	 * @param Title|null $title
 	 */
 	private static function recordSlowFilter(
-		$filterId, $runtime, $totalConditions, $matched, Title $title
+		$filterId, $runtime, $totalConditions, $matched, Title $title = null
 	) {
-		$logger = LoggerFactory::getInstance( 'AbuseFilterSlow' );
+		$title = $title ? $title->getPrefixedText() : '';
+
+		$logger = LoggerFactory::getInstance( 'AbuseFilter' );
 		$logger->info(
 			'Edit filter {filter_id} on {wiki} is taking longer than expected',
 			[
 				'wiki' => wfWikiID(),
 				'filter_id' => $filterId,
-				'title' => $title->getPrefixedText(),
+				'title' => $title,
 				'runtime' => $runtime,
 				'matched' => $matched,
 				'total_conditions' => $totalConditions
@@ -727,7 +728,7 @@ class AbuseFilter {
 	/**
 	 * @param int $filter
 	 */
-	private static function resetFilterProfile( $filter ) {
+	public static function resetFilterProfile( $filter ) {
 		$stash = ObjectCache::getMainStashInstance();
 		$countKey = wfMemcKey( 'abusefilter', 'profile', $filter, 'count' );
 		$totalKey = wfMemcKey( 'abusefilter', 'profile', $filter, 'total' );
@@ -853,7 +854,7 @@ class AbuseFilter {
 	 * @param string $prefix
 	 * @return array[]
 	 */
-	public static function loadConsequencesFromDB( IDatabase $dbr, $filters, $prefix = '' ) {
+	public static function loadConsequencesFromDB( $dbr, $filters, $prefix = '' ) {
 		$actionsByFilter = [];
 		foreach ( $filters as $filter ) {
 			$actionsByFilter[$prefix . $filter] = [];
@@ -894,16 +895,13 @@ class AbuseFilter {
 	 * @param string[] $filters
 	 * @param Title $title
 	 * @param AbuseFilterVariableHolder $vars
+	 * @param User $user
 	 * @return Status returns the operation's status. $status->isOK() will return true if
 	 *         there were no actions taken, false otherwise. $status->getValue() will return
 	 *         an array listing the actions taken. $status->getErrors() etc. will provide
 	 *         the errors and warnings to be shown to the user to explain the actions.
 	 */
-	public static function executeFilterActions(
-		$filters,
-		Title $title,
-		AbuseFilterVariableHolder $vars
-	) {
+	public static function executeFilterActions( $filters, $title, $vars, User $user ) {
 		global $wgMainCacheType;
 
 		$actionsByFilter = self::getConsequencesForFilters( $filters );
@@ -963,7 +961,7 @@ class AbuseFilter {
 					$session[$warnKey] = true;
 
 					// Threaten them a little bit
-					if ( !empty( $parameters[0] ) && strlen( $parameters[0] ) ) {
+					if ( isset( $parameters[0] ) ) {
 						$msg = $parameters[0];
 					} else {
 						$msg = 'abusefilter-warning';
@@ -992,19 +990,18 @@ class AbuseFilter {
 			// Find out the max expiry to issue the longest triggered block.
 			// Need to check here since methods like user->getBlock() aren't available
 			if ( !empty( $actions['block'] ) ) {
-				global $wgUser;
 				$parameters = $actions['block']['parameters'];
 
 				if ( count( $parameters ) === 3 ) {
 					// New type of filters with custom block
-					if ( $wgUser->isAnon() ) {
+					if ( $user->isAnon() ) {
 						$expiry = $parameters[1];
 					} else {
 						$expiry = $parameters[2];
 					}
 				} else {
 					// Old type with fixed expiry
-					if ( $wgUser->isAnon() && $wgAbuseFilterAnonBlockDuration !== null ) {
+					if ( $user->isAnon() && $wgAbuseFilterAnonBlockDuration !== null ) {
 						// The user isn't logged in and the anon block duration
 						// doesn't default to $wgAbuseFilterBlockDuration.
 						$expiry = $wgAbuseFilterAnonBlockDuration;
@@ -1034,7 +1031,8 @@ class AbuseFilter {
 					$title,
 					$vars,
 					self::getFilter( $filter )->af_public_comments,
-					$filter
+					$filter,
+					$user
 				);
 
 				if ( $newMsg !== null ) {
@@ -1053,7 +1051,7 @@ class AbuseFilter {
 					'desc' => $blockValues[0],
 					'number' => $blockValues[1]
 				],
-				$wgUser->getName(),
+				$user->getName(),
 				$maxExpiry,
 				true,
 				$blockValues[2]
@@ -1082,7 +1080,7 @@ class AbuseFilter {
 	 *
 	 * @return Status
 	 */
-	private static function buildStatus( array $actionsTaken, array $messages ) {
+	protected static function buildStatus( array $actionsTaken, array $messages ) {
 		$status = Status::newGood( $actionsTaken );
 
 		foreach ( $messages as $msg ) {
@@ -1096,22 +1094,14 @@ class AbuseFilter {
 	 * @param AbuseFilterVariableHolder $vars
 	 * @param Title $title
 	 * @param string $group The filter's group (as defined in $wgAbuseFilterValidGroups)
-	 * @param User|null $user The user performing the action; defaults to $wgUser
+	 * @param User $user The user performing the action
 	 * @param string $mode Use 'execute' to run filters and log or 'stash' to only cache matches
 	 * @return Status
 	 */
 	public static function filterAction(
-		AbuseFilterVariableHolder $vars,
-		Title $title,
-		$group = 'default',
-		User $user = null,
-		$mode = 'execute'
+		AbuseFilterVariableHolder $vars, $title, $group, User $user, $mode = 'execute'
 	) {
-		global $wgUser, $wgRequest, $wgAbuseFilterRuntimeProfile, $wgAbuseFilterLogIP;
-
-		if ( !$user ) {
-			$user = $wgUser;
-		}
+		global $wgRequest, $wgAbuseFilterRuntimeProfile, $wgAbuseFilterLogIP;
 
 		$logger = LoggerFactory::getInstance( 'StashEdit' );
 		$statsd = MediaWikiServices::getInstance()->getStatsdDataFactory();
@@ -1189,11 +1179,11 @@ class AbuseFilter {
 		if ( count( $matched_filters ) == 0 ) {
 			$status = Status::newGood();
 		} else {
-			$status = self::executeFilterActions( $matched_filters, $title, $vars );
+			$status = self::executeFilterActions( $matched_filters, $title, $vars, $user );
 			$actions_taken = $status->getValue();
 			$action = $vars->getVar( 'ACTION' )->toString();
 
-			// If $wgUser isn't safe to load (e.g. a failure during
+			// If $user isn't safe to load (e.g. a failure during
 			// AbortAutoAccount), create a dummy anonymous user instead.
 			$user = $user->isSafeToLoad() ? $user : new User;
 
@@ -1304,12 +1294,7 @@ class AbuseFilter {
 	 * @param AbuseFilterVariableHolder $vars
 	 * @param string $group The filter's group (as defined in $wgAbuseFilterValidGroups)
 	 */
-	public static function addLogEntries(
-		$actions_taken,
-		$log_template,
-		AbuseFilterVariableHolder $vars,
-		$group = 'default'
-	) {
+	public static function addLogEntries( $actions_taken, $log_template, $vars, $group = 'default' ) {
 		$dbw = wfGetDB( DB_MASTER );
 
 		$central_log_template = [
@@ -1431,7 +1416,7 @@ class AbuseFilter {
 
 			foreach ( $central_log_rows as $row ) {
 				$fdb->insert( 'abuse_filter_log', $row, __METHOD__ );
-				$global_log_ids[] = $dbw->insertId();
+				$global_log_ids[] = $fdb->insertId();
 			}
 
 			$fdb->onTransactionPreCommitOrIdle(
@@ -1462,7 +1447,7 @@ class AbuseFilter {
 	 *
 	 * @return int|null
 	 */
-	public static function storeVarDump( AbuseFilterVariableHolder $vars, $global = false ) {
+	public static function storeVarDump( $vars, $global = false ) {
 		global $wgCompressRevisions;
 
 		// Get all variables yet set and compute old and new wikitext if not yet done
@@ -1473,9 +1458,11 @@ class AbuseFilter {
 		$text = serialize( $vars );
 		$flags = [ 'nativeDataArray' ];
 
-		if ( $wgCompressRevisions && function_exists( 'gzdeflate' ) ) {
-			$text = gzdeflate( $text );
-			$flags[] = 'gzip';
+		if ( $wgCompressRevisions ) {
+			if ( function_exists( 'gzdeflate' ) ) {
+				$text = gzdeflate( $text );
+				$flags[] = 'gzip';
+			}
 		}
 
 		// Store to ExternalStore if applicable
@@ -1570,6 +1557,10 @@ class AbuseFilter {
 			foreach ( $vars as $key => $value ) {
 				$obj->setVar( $key, $value );
 			}
+			// If old variable names are used, make sure to keep them
+			if ( count( array_intersect_key( self::getDeprecatedVariables(), $obj->mVars ) ) !== 0 ) {
+				$obj->mVarsVersion = 1;
+			}
 		}
 
 		return $obj;
@@ -1582,19 +1573,14 @@ class AbuseFilter {
 	 * @param AbuseFilterVariableHolder $vars
 	 * @param string $rule_desc
 	 * @param int|string $rule_number
+	 * @param User $user
 	 *
 	 * @return array|null a message describing the action that was taken,
 	 *         or null if no action was taken. The message is given as an array
 	 *         containing the message key followed by any message parameters.
 	 */
-	public static function takeConsequenceAction(
-		$action,
-		$parameters,
-		Title $title,
-		AbuseFilterVariableHolder $vars,
-		$rule_desc,
-		$rule_number
-	) {
+	public static function takeConsequenceAction( $action, $parameters, $title,
+		$vars, $rule_desc, $rule_number, User $user ) {
 		global $wgAbuseFilterCustomActionsHandlers, $wgRequest;
 
 		$message = null;
@@ -1639,16 +1625,15 @@ class AbuseFilter {
 				];
 				break;
 			case 'degroup':
-				global $wgUser;
-				if ( !$wgUser->isAnon() ) {
+				if ( !$user->isAnon() ) {
 					// Remove all groups from the user.
-					$groups = $wgUser->getGroups();
+					$groups = $user->getGroups();
 					// Make sure that the stored var dump contains user groups, since we may
 					// need them if reverting this degroup via Special:AbuseFilter/revert
 					$vars->setVar( 'user_groups', $groups );
 
 					foreach ( $groups as $group ) {
-						$wgUser->removeGroup( $group );
+						$user->removeGroup( $group );
 					}
 
 					$message = [
@@ -1664,7 +1649,7 @@ class AbuseFilter {
 
 					$logEntry = new ManualLogEntry( 'rights', 'rights' );
 					$logEntry->setPerformer( self::getFilterUser() );
-					$logEntry->setTarget( $wgUser->getUserPage() );
+					$logEntry->setTarget( $user->getUserPage() );
 					$logEntry->setComment(
 						wfMessage(
 							'abusefilter-degroupreason',
@@ -1681,12 +1666,11 @@ class AbuseFilter {
 
 				break;
 			case 'blockautopromote':
-				global $wgUser;
-				if ( !$wgUser->isAnon() ) {
+				if ( !$user->isAnon() ) {
 					// Block for 3-7 days.
 					$blockPeriod = (int)mt_rand( 3 * 86400, 7 * 86400 );
 					ObjectCache::getMainStashInstance()->set(
-						self::autoPromoteBlockKey( $wgUser ), true, $blockPeriod
+						self::autoPromoteBlockKey( $user ), true, $blockPeriod
 					);
 
 					$message = [
@@ -1700,12 +1684,14 @@ class AbuseFilter {
 			case 'block':
 				// Do nothing, handled at the end of executeFilterActions. Here for completeness.
 				break;
+			case 'flag':
+				// Do nothing. Here for completeness.
+				break;
+
 			case 'tag':
 				// Mark with a tag on recentchanges.
-				global $wgUser;
-
 				$actionID = implode( '-', [
-					$title->getPrefixedText(), $wgUser->getName(),
+					$title->getPrefixedText(), $user->getName(),
 					$vars->getVar( 'ACTION' )->toString()
 				] );
 
@@ -1761,7 +1747,7 @@ class AbuseFilter {
 	 * @param bool $isAutoBlock
 	 * @param bool $preventEditOwnUserTalk
 	 */
-	private static function doAbuseFilterBlock(
+	protected static function doAbuseFilterBlock(
 		array $rule,
 		$target,
 		$expiry,
@@ -1822,7 +1808,7 @@ class AbuseFilter {
 	 * @param bool $global
 	 * @return bool
 	 */
-	public static function isThrottled( $throttleId, $types, Title $title, $rateCount,
+	public static function isThrottled( $throttleId, $types, $title, $rateCount,
 		$ratePeriod, $global = false
 	) {
 		$stash = ObjectCache::getMainStashInstance();
@@ -1860,7 +1846,7 @@ class AbuseFilter {
 	 * @param Title $title
 	 * @return int|string
 	 */
-	public static function throttleIdentifier( $type, Title $title ) {
+	public static function throttleIdentifier( $type, $title ) {
 		global $wgUser, $wgRequest;
 
 		switch ( $type ) {
@@ -1901,7 +1887,7 @@ class AbuseFilter {
 	 * @param bool $global
 	 * @return string
 	 */
-	public static function throttleKey( $throttleId, $type, Title $title, $global = false ) {
+	public static function throttleKey( $throttleId, $type, $title, $global = false ) {
 		$types = explode( ',', $type );
 
 		$identifiers = [];
@@ -1914,15 +1900,14 @@ class AbuseFilter {
 
 		global $wgAbuseFilterIsCentral, $wgAbuseFilterCentralDB;
 
+		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
 		if ( $global && !$wgAbuseFilterIsCentral ) {
-			list( $globalSite, $globalPrefix ) = wfSplitWikiID( $wgAbuseFilterCentralDB );
-
-			return wfForeignMemcKey(
-				$globalSite, $globalPrefix,
-				'abusefilter', 'throttle', $throttleId, $type, $identifier );
+			return $cache->makeGlobalKey(
+				'abusefilter', 'throttle', $wgAbuseFilterCentralDB, $throttleId, $type, $identifier
+			);
 		}
 
-		return wfMemcKey( 'abusefilter', 'throttle', $throttleId, $type, $identifier );
+		return $cache->makeKey( 'abusefilter', 'throttle', $throttleId, $type, $identifier );
 	}
 
 	/**
@@ -1932,24 +1917,22 @@ class AbuseFilter {
 	public static function getGlobalRulesKey( $group ) {
 		global $wgAbuseFilterIsCentral, $wgAbuseFilterCentralDB;
 
+		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
 		if ( !$wgAbuseFilterIsCentral ) {
-			list( $globalSite, $globalPrefix ) = wfSplitWikiID( $wgAbuseFilterCentralDB );
-
-			return wfForeignMemcKey(
-				$globalSite, $globalPrefix,
-				'abusefilter', 'rules', $group
-			);
+			return $cache->makeGlobalKey( 'abusefilter', 'rules', $wgAbuseFilterCentralDB, $group );
 		}
 
-		return wfMemcKey( 'abusefilter', 'rules', $group );
+		return $cache->makeKey( 'abusefilter', 'rules', $group );
 	}
 
 	/**
 	 * @param User $user
 	 * @return string
 	 */
-	public static function autoPromoteBlockKey( User $user ) {
-		return wfMemcKey( 'abusefilter', 'block-autopromote', $user->getId() );
+	public static function autoPromoteBlockKey( $user ) {
+		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
+
+		return $cache->makeKey( 'abusefilter', 'block-autopromote', $user->getId() );
 	}
 
 	/**
@@ -1957,7 +1940,7 @@ class AbuseFilter {
 	 * @param bool[] $filters
 	 * @param string $group The filter's group (as defined in $wgAbuseFilterValidGroups)
 	 */
-	private static function recordStats( $filters, $group = 'default' ) {
+	public static function recordStats( $filters, $group = 'default' ) {
 		global $wgAbuseFilterConditionLimit, $wgAbuseFilterProfileActionsCap;
 
 		$stash = ObjectCache::getMainStashInstance();
@@ -2013,7 +1996,7 @@ class AbuseFilter {
 	 * @param string[] $filters
 	 * @param int $total
 	 */
-	private static function checkEmergencyDisable( $group, $filters, $total ) {
+	public static function checkEmergencyDisable( $group, $filters, $total ) {
 		global $wgAbuseFilterEmergencyDisableThreshold, $wgAbuseFilterEmergencyDisableCount,
 			$wgAbuseFilterEmergencyDisableAge;
 
@@ -2232,6 +2215,76 @@ class AbuseFilter {
 	}
 
 	/**
+	 * Validate throttle parameters
+	 *
+	 * @param array $params Throttle parameters
+	 * @return null|string Null on success, a string with the error message on failure
+	 */
+	public static function checkThrottleParameters( $params ) {
+		$throttleRate = explode( ',', $params[1] );
+		$throttleCount = $throttleRate[0];
+		$throttlePeriod = $throttleRate[1];
+		$throttleGroups = array_slice( $params, 2 );
+		$validGroups = [
+			'ip',
+			'user',
+			'range',
+			'creationdate',
+			'editcount',
+			'site',
+			'page'
+		];
+
+		$error = null;
+		if ( preg_match( '/^[1-9][0-9]*$/', $throttleCount ) === 0 ) {
+			$error = 'abusefilter-edit-invalid-throttlecount';
+		} elseif ( preg_match( '/^[1-9][0-9]*$/', $throttlePeriod ) === 0 ) {
+			$error = 'abusefilter-edit-invalid-throttleperiod';
+		} elseif ( !$throttleGroups ) {
+			$error = 'abusefilter-edit-empty-throttlegroups';
+		} else {
+			$valid = true;
+			// Groups should be unique in three ways: no direct duplicates like 'user' and 'user',
+			// no duplicated subgroups, not even shuffled ('ip,user' and 'user,ip') and no duplicates
+			// within subgroups ('user,ip,user')
+			$uniqueGroups = [];
+			$uniqueSubGroups = true;
+			// Every group should be valid, and subgroups should have valid groups inside
+			foreach ( $throttleGroups as $group ) {
+				if ( strpos( $group, ',' ) !== false ) {
+					$subGroups = explode( ',', $group );
+					if ( $subGroups !== array_unique( $subGroups ) ) {
+						$uniqueSubGroups = false;
+						break;
+					}
+					foreach ( $subGroups as $subGroup ) {
+						if ( !in_array( $subGroup, $validGroups ) ) {
+							$valid = false;
+							break 2;
+						}
+					}
+					sort( $subGroups );
+					$uniqueGroups[] = implode( ',', $subGroups );
+				} else {
+					if ( !in_array( $group, $validGroups ) ) {
+						$valid = false;
+						break;
+					}
+					$uniqueGroups[] = $group;
+				}
+			}
+
+			if ( !$valid ) {
+				$error = 'abusefilter-edit-invalid-throttlegroups';
+			} elseif ( !$uniqueSubGroups || $uniqueGroups !== array_unique( $uniqueGroups ) ) {
+				$error = 'abusefilter-edit-duplicated-throttlegroups';
+			}
+		}
+
+		return $error;
+	}
+
+	/**
 	 * Checks whether user input for the filter editing form is valid and if so saves the filter
 	 *
 	 * @param AbuseFilterViewEdit $page
@@ -2241,8 +2294,7 @@ class AbuseFilter {
 	 * @param array $actions
 	 * @return Status
 	 */
-	public static function saveFilter( AbuseFilterViewEdit $page, $filter, WebRequest $request,
-		$newRow, $actions ) {
+	public static function saveFilter( $page, $filter, $request, $newRow, $actions ) {
 		$validationStatus = Status::newGood();
 
 		// Check the syntax
@@ -2287,6 +2339,15 @@ class AbuseFilter {
 			}
 		}
 
+		// If 'throttle' is selected, check its parameters
+		if ( !empty( $actions['throttle'] ) ) {
+			$throttleCheck = self::checkThrottleParameters( $actions['throttle']['parameters'] );
+			if ( $throttleCheck !== null ) {
+				$validationStatus->error( $throttleCheck );
+				return $validationStatus;
+			}
+		}
+
 		$differences = self::compareVersions(
 			[ $newRow, $actions ],
 			[ $newRow->mOriginalRow, $newRow->mOriginalActions ]
@@ -2300,9 +2361,10 @@ class AbuseFilter {
 		}
 
 		// Don't allow custom messages on global rules
-		if ( $newRow->af_global == 1 &&
-			$request->getVal( 'wpFilterWarnMessage' ) !== 'abusefilter-warning'
-		) {
+		if ( $newRow->af_global == 1 && (
+				$request->getVal( 'wpFilterWarnMessage' ) !== 'abusefilter-warning' ||
+				$request->getVal( 'wpFilterDisallowMessage' ) !== 'abusefilter-disallowed'
+		) ) {
 			$validationStatus->fatal( 'abusefilter-edit-notallowed-global-custom-msg' );
 			return $validationStatus;
 		}
@@ -2358,7 +2420,7 @@ class AbuseFilter {
 		$filter,
 		$actions,
 		$wasGlobal,
-		AbuseFilterViewEdit $page
+		$page
 	) {
 		$user = $page->getUser();
 		$dbw = wfGetDB( DB_MASTER );
@@ -2758,15 +2820,15 @@ class AbuseFilter {
 	}
 
 	/**
-	 * @param Title $title
+	 * @param Title|null $title
 	 * @param Page|null $page
 	 * @return AbuseFilterVariableHolder
 	 */
-	public static function getEditVars( Title $title, Page $page = null ) {
+	public static function getEditVars( $title, Page $page = null ) {
 		$vars = new AbuseFilterVariableHolder;
 
 		// NOTE: $page may end up remaining null, e.g. if $title points to a special page.
-		if ( !$page && $title->canExist() ) {
+		if ( !$page && $title instanceof Title && $title->canExist() ) {
 			$page = WikiPage::factory( $title );
 		}
 
@@ -2795,34 +2857,36 @@ class AbuseFilter {
 		$vars->setLazyLoadVar( 'new_text', 'strip-html',
 			[ 'html-var' => 'new_html' ] );
 
-		$vars->setLazyLoadVar( 'all_links', 'links-from-wikitext',
-			[
-				'namespace' => $title->getNamespace(),
-				'title' => $title->getText(),
-				'text-var' => 'new_wikitext',
-				'article' => $page
-			] );
-		$vars->setLazyLoadVar( 'old_links', 'links-from-wikitext-or-database',
-			[
-				'namespace' => $title->getNamespace(),
-				'title' => $title->getText(),
-				'text-var' => 'old_wikitext'
-			] );
-		$vars->setLazyLoadVar( 'new_pst', 'parse-wikitext',
-			[
-				'namespace' => $title->getNamespace(),
-				'title' => $title->getText(),
-				'wikitext-var' => 'new_wikitext',
-				'article' => $page,
-				'pst' => true,
-			] );
-		$vars->setLazyLoadVar( 'new_html', 'parse-wikitext',
-			[
-				'namespace' => $title->getNamespace(),
-				'title' => $title->getText(),
-				'wikitext-var' => 'new_wikitext',
-				'article' => $page
-			] );
+		if ( $title instanceof Title ) {
+			$vars->setLazyLoadVar( 'all_links', 'links-from-wikitext',
+				[
+					'namespace' => $title->getNamespace(),
+					'title' => $title->getText(),
+					'text-var' => 'new_wikitext',
+					'article' => $page
+				] );
+			$vars->setLazyLoadVar( 'old_links', 'links-from-wikitext-or-database',
+				[
+					'namespace' => $title->getNamespace(),
+					'title' => $title->getText(),
+					'text-var' => 'old_wikitext'
+				] );
+			$vars->setLazyLoadVar( 'new_pst', 'parse-wikitext',
+				[
+					'namespace' => $title->getNamespace(),
+					'title' => $title->getText(),
+					'wikitext-var' => 'new_wikitext',
+					'article' => $page,
+					'pst' => true,
+				] );
+			$vars->setLazyLoadVar( 'new_html', 'parse-wikitext',
+				[
+					'namespace' => $title->getNamespace(),
+					'title' => $title->getText(),
+					'wikitext-var' => 'new_wikitext',
+					'article' => $page
+				] );
+		}
 
 		return $vars;
 	}
@@ -2930,7 +2994,40 @@ class AbuseFilter {
 			} elseif ( $action === 'throttle' ) {
 				array_shift( $parameters );
 				list( $actions, $time ) = explode( ',', array_shift( $parameters ) );
-				$groups = $wgLang->commaList( $parameters );
+
+				if ( $parameters === [ '' ] ) {
+					// Having empty groups won't happen for new filters due to validation upon saving,
+					// but old entries may have it. We'd better not show a broken message. Also,
+					// the array has an empty string inside because we haven't been passing an empty array
+					// as the default when retrieving wpFilterThrottleGroups with getArray (when it was
+					// a CheckboxMultiselect).
+					$groups = '';
+				} else {
+					// Old entries may not have unique values.
+					$throttleGroups = array_unique( $parameters );
+					// Join comma-separated groups in a commaList with a final "and", and convert to messages.
+					// Messages used here: abusefilter-throttle-ip, abusefilter-throttle-user,
+					// abusefilter-throttle-site, abusefilter-throttle-creationdate, abusefilter-throttle-editcount
+					// abusefilter-throttle-range, abusefilter-throttle-page
+					foreach ( $throttleGroups as &$val ) {
+						if ( strpos( $val, ',' ) !== false ) {
+							$subGroups = explode( ',', $val );
+							foreach ( $subGroups as &$group ) {
+								$msg = wfMessage( "abusefilter-throttle-$group" );
+								// We previously accepted literally everything in this field, so old entries
+								// may have weird stuff.
+								$group = $msg->exists() ? $msg->text() : $group;
+							}
+							unset( $group );
+							$val = $wgLang->listToText( $subGroups );
+						} else {
+							$msg = wfMessage( "abusefilter-throttle-$val" );
+							$val = $msg->exists() ? $msg->text() : $val;
+						}
+					}
+					unset( $val );
+					$groups = $wgLang->semicolonList( $throttleGroups );
+				}
 				$displayAction = self::getActionDisplay( $action ) .
 				wfMessage( 'colon-separator' )->escaped() .
 				wfMessage( 'abusefilter-throttle-details' )->params( $actions, $time, $groups )->escaped();
@@ -3019,9 +3116,8 @@ class AbuseFilter {
 	 * @return string|null the content of the revision as some kind of string,
 	 *        or an empty string if it can not be found
 	 */
-	public static function revisionToString( Revision $revision = null,
-		$audience = Revision::FOR_THIS_USER ) {
-		if ( !$revision ) {
+	public static function revisionToString( $revision, $audience = Revision::FOR_THIS_USER ) {
+		if ( !$revision instanceof Revision ) {
 			return '';
 		}
 

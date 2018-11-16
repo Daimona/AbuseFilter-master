@@ -7,7 +7,7 @@ class AbuseFilterExaminePager extends ReverseChronologicalPager {
 	 * @param AbuseFilterViewExamine $page
 	 * @param AbuseFilterChangesList $changesList
 	 */
-	public function __construct( AbuseFilterViewExamine $page, AbuseFilterChangesList $changesList ) {
+	public function __construct( $page, $changesList ) {
 		parent::__construct();
 		$this->mChangesList = $changesList;
 		$this->mPage = $page;
@@ -54,7 +54,6 @@ class AbuseFilterExaminePager extends ReverseChronologicalPager {
 	 * @return string
 	 */
 	public function formatRow( $row ) {
-		// Incompatible stuff.
 		$rc = RecentChange::newFromRow( $row );
 		$rc->counter = $this->mPage->mCounter++;
 		return $this->mChangesList->recentChangesLine( $rc, false );

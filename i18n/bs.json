@@ -9,7 +9,8 @@
 			"KWiki",
 			"Srdjan m",
 			"Semso98",
-			"Matma Rex"
+			"Matma Rex",
+			"BadDog"
 		]
 	},
 	"abusefilter-desc": "Dodaje automatske heuristike izmjenama.",
@@ -71,6 +72,7 @@
 	"abusefilter-log-details-diff": "Izmjene napravljene pri uređivanju",
 	"abusefilter-log-linkoncontribs": "zapisnik zloupotrebe",
 	"abusefilter-log-linkoncontribs-text": "Zapisnik zloupotrebe za {{GENDER:$1|ovog korisnika|ovu korisnicu}}",
+	"abusefilter-log-linkonhistory": "prikaži zapisnik zloupotrebe",
 	"abusefilter-log-hidden": "(stavka sakrivena)",
 	"abusefilter-log-hidden-implicit": "(sakriveno jer je izmjena obrisana)",
 	"abusefilter-log-cannot-see-details": "Nemate dopuštenje da vidite detalje ovog unosa.",
@@ -233,7 +235,7 @@
 	"abusefilter-edit-builder-funcs-rescape": "Izbjegni doslovne niske u regexu (rescape)",
 	"abusefilter-edit-builder-funcs-set_var": "Postavi varijable (set_var)",
 	"abusefilter-edit-builder-group-vars": "Promijenjive",
-	"abusefilter-edit-builder-vars-accountname": "Broj računa (on account creation)",
+	"abusefilter-edit-builder-vars-accountname": "Ime korisničkog računa (u trenutku pravljenja)",
 	"abusefilter-edit-builder-vars-timestamp": "Unix vremenski pečat izmjene",
 	"abusefilter-edit-builder-vars-action": "akcija",
 	"abusefilter-edit-builder-vars-addedlines": "Linije dodane u izmjeni",

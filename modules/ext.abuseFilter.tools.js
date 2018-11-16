@@ -22,13 +22,13 @@
 			action: 'abusefilterevalexpression',
 			expression: expr
 		} )
-			.fail( function showError( error, details ) {
+			.fail( function ( error, details ) {
 				var msg = error === 'http' ? 'abusefilter-http-error' : 'unknown-error';
 				$.removeSpinner( 'abusefilter-expr' );
 				$( '#mw-abusefilter-expr-result' )
 					.text( mw.msg( msg, details.exception ) );
 			} )
-			.done( function showResult( data ) {
+			.done( function ( data ) {
 				$.removeSpinner( 'abusefilter-expr' );
 
 				$( '#mw-abusefilter-expr-result' )
@@ -43,10 +43,7 @@
 	 */
 	function processReautoconfirm( data ) {
 		mw.notify(
-			mw.message(
-				'abusefilter-reautoconfirm-done',
-				data.abusefilterunblockautopromote.user
-			).toString()
+			mw.message( 'abusefilter-reautoconfirm-done', data.abusefilterunblockautopromote.user ).toString()
 		);
 
 		$.removeSpinner( 'abusefilter-reautoconfirm' );
@@ -108,7 +105,7 @@
 		return false;
 	}
 
-	$( document ).ready( function initialize() {
+	$( document ).ready( function () {
 		$( '#mw-abusefilter-submitexpr' ).click( doExprSubmit );
 		$( '#mw-abusefilter-reautoconfirmsubmit' ).click( doReautoSubmit );
 	} );

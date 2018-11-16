@@ -94,7 +94,7 @@
 			.fail( examinerTestProcessFailure );
 	}
 
-	$( document ).ready( function initialize() {
+	$( document ).ready( function () {
 		$syntaxResult = $( '#mw-abusefilter-syntaxresult' );
 		$( '#mw-abusefilter-examine-test' ).click( examinerTestFilter );
 	} );

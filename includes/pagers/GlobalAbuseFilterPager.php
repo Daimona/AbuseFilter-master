@@ -11,7 +11,7 @@ class GlobalAbuseFilterPager extends AbuseFilterPager {
 	 * @param array $conds
 	 * @param LinkRenderer $linkRenderer
 	 */
-	public function __construct( AbuseFilterViewList $page, $conds, LinkRenderer $linkRenderer ) {
+	public function __construct( $page, $conds, $linkRenderer ) {
 		parent::__construct( $page, $conds, $linkRenderer, [ '', 'LIKE' ] );
 		$this->mDb = wfGetDB(
 			DB_REPLICA, [], $this->getConfig()->get( 'AbuseFilterCentralDB' ) );
@@ -30,7 +30,7 @@ class GlobalAbuseFilterPager extends AbuseFilterPager {
 			case 'af_id':
 				return $lang->formatNum( intval( $value ) );
 			case 'af_public_comments':
-				return $this->getOutput()->parseInline( $value );
+				return $this->getOutput()->parseInlineAsInterface( $value );
 			case 'af_actions':
 				$actions = explode( ',', $value );
 				$displayActions = [];

@@ -34,7 +34,14 @@
  * @covers AFComputedVariable
  */
 class AbuseFilterTest extends MediaWikiTestCase {
-	protected static $mUser, $mTitle, $mPage, $mVariables;
+	/** @var User */
+	protected static $mUser;
+	/** @var Title */
+	protected static $mTitle;
+	/** @var WikiPage */
+	protected static $mPage;
+	/** @var AbuseFilterVariableHolder */
+	protected static $mVariables;
 
 	/**
 	 * @var array These tables will be deleted in parent::tearDown.
@@ -54,11 +61,15 @@ class AbuseFilterTest extends MediaWikiTestCase {
 	 */
 	protected function setUp() {
 		parent::setUp();
+		MWTimestamp::setFakeTime( 1514700000 );
 		$user = User::newFromName( 'AnotherFilteredUser' );
 		$user->addToDatabase();
 		$user->addGroup( 'basicFilteredUser' );
 		self::$mUser = $user;
+		MWTimestamp::setFakeTime( false );
+
 		self::$mVariables = new AbuseFilterVariableHolder();
+
 		// Make sure that the config we're using is the one we're expecting
 		$this->setMwGlobals( [
 			'wgUser' => $user,
@@ -106,6 +117,7 @@ class AbuseFilterTest extends MediaWikiTestCase {
 	 * @see MediaWikiTestCase::tearDown
 	 */
 	protected function tearDown() {
+		MWTimestamp::setFakeTime( false );
 		$userGroups = self::$mUser->getGroups();
 		// We want to start fresh
 		foreach ( $userGroups as $group ) {
@@ -143,6 +155,8 @@ class AbuseFilterTest extends MediaWikiTestCase {
 						self::$mUser
 					);
 				}
+				// Reload to reflect deferred update
+				self::$mUser->clearInstanceCache();
 				$result = 7;
 				break;
 			case 'user_name':
@@ -152,9 +166,6 @@ class AbuseFilterTest extends MediaWikiTestCase {
 				$time = wfTimestampNow();
 				self::$mUser->setEmailAuthenticationTimestamp( $time );
 				$result = $time;
-				break;
-			case 'user_age':
-				$result = wfTimestampNow() - self::$mUser->getRegistration();
 				break;
 			case 'user_groups':
 				self::$mUser->addGroup( 'intermediateFilteredUser' );
@@ -225,17 +236,15 @@ class AbuseFilterTest extends MediaWikiTestCase {
 	 * @covers AbuseFilter::generateUserVars
 	 */
 	public function testUserAgeVar() {
-		$computed = self::computeExpectedUserVariable( 'user_age' )[0];
-
+		// Set a fake timestamp so that execution time won't be a problem
+		MWTimestamp::setFakeTime( 1514700163 );
 		$variableHolder = AbuseFilter::generateUserVars( self::$mUser );
 		$actual = $variableHolder->getVar( 'user_age' )->toNative();
 
-		$difference = abs( strtotime( $actual ) - strtotime( $computed ) );
-		$this->assertLessThanOrEqual(
-			// 10 seconds should be a good confidence interval
-			10,
-			$difference,
-			"AbuseFilter variable user_age is computed wrongly. Expected: $computed, actual: $actual."
+		$this->assertEquals(
+			163,
+			$actual,
+			"AbuseFilter variable user_age is computed wrongly. Expected: 163, actual: $actual."
 		);
 	}
 
@@ -252,7 +261,7 @@ class AbuseFilterTest extends MediaWikiTestCase {
 	private static function computeExpectedTitleVariable( $suffix, $options = null ) {
 		self::$mTitle = Title::newFromText( 'AbuseFilter test' );
 		$page = WikiPage::factory( self::$mTitle );
-		$createdAt = microtime( true );
+
 		if ( $options === 'restricted' ) {
 			$action = str_replace( '_restrictions_', '', $suffix );
 			$namespace = 0;
@@ -272,11 +281,11 @@ class AbuseFilterTest extends MediaWikiTestCase {
 					self::$mUser
 				);
 			}
-			$cascade = false;
-			$page->doUpdateRestrictions(
+			$_ = false;
+			$s = $page->doUpdateRestrictions(
 				[ $action => true ],
 				[ $action => 'infinity' ],
-				$cascade,
+				$_,
 				'Testing restrictions for AbuseFilter',
 				self::$mUser
 			);
@@ -296,11 +305,41 @@ class AbuseFilterTest extends MediaWikiTestCase {
 				$result = self::$mTitle->getPrefixedText();
 				break;
 			case '_restrictions_create':
+				$restrictions = self::$mTitle->getRestrictions( 'create' );
+				$restrictions = count( $restrictions ) ? $restrictions : [];
+				$preliminarCheck = !( $options === 'restricted' xor count( $restrictions ) );
+				if ( $preliminarCheck ) {
+					$result = $restrictions;
+				} else {
+					$success = false;
+					$result = false;
+				}
+				break;
 			case '_restrictions_edit':
+				$restrictions = self::$mTitle->getRestrictions( 'edit' );
+				$restrictions = count( $restrictions ) ? $restrictions : [];
+				$preliminarCheck = !( $options === 'restricted' xor count( $restrictions ) );
+				if ( $preliminarCheck ) {
+					$result = $restrictions;
+				} else {
+					$success = false;
+					$result = false;
+				}
+				break;
 			case '_restrictions_move':
+				$restrictions = self::$mTitle->getRestrictions( 'move' );
+				$restrictions = count( $restrictions ) ? $restrictions : [];
+				$preliminarCheck = !( $options === 'restricted' xor count( $restrictions ) );
+				if ( $preliminarCheck ) {
+					$result = $restrictions;
+				} else {
+					$success = false;
+					$result = false;
+				}
+				break;
 			case '_restrictions_upload':
-				$type = str_replace( '_restrictions_', '', $suffix );
-				$restrictions = self::$mTitle->getRestrictions( $type );
+				$restrictions = self::$mTitle->getRestrictions( 'upload' );
+				$restrictions = count( $restrictions ) ? $restrictions : [];
 				$preliminarCheck = !( $options === 'restricted' xor count( $restrictions ) );
 				if ( $preliminarCheck ) {
 					$result = $restrictions;
@@ -318,14 +357,14 @@ class AbuseFilterTest extends MediaWikiTestCase {
 					false,
 					self::$mUser
 				);
-				$mockContributors = [ 'Alice', 'Bob', 'Charlie' ];
+				$mockContributors = [ 'X>Alice', 'X>Bob', 'X>Charlie' ];
 				foreach ( $mockContributors as $user ) {
 					$page->doEditContent(
 						new WikitextContent( "AbuseFilter test, page revision by $user" ),
 						'Testing page for AbuseFilter',
 						EDIT_UPDATE,
 						false,
-						User::newFromName( $user )
+						User::newFromName( $user, false )
 					);
 				}
 				$contributors = array_reverse( $mockContributors );
@@ -341,20 +380,17 @@ class AbuseFilterTest extends MediaWikiTestCase {
 					false,
 					self::$mUser
 				);
-				$mockContributors = [ 'Alice', 'Bob', 'Charlie' ];
+				$mockContributors = [ 'X>Alice', 'X>Bob', 'X>Charlie' ];
 				foreach ( $mockContributors as $user ) {
 					$page->doEditContent(
 						new WikitextContent( "AbuseFilter test, page revision by $user" ),
 						'Testing page for AbuseFilter',
 						EDIT_UPDATE,
 						false,
-						User::newFromName( $user )
+						User::newFromName( $user, false )
 					);
 				}
 				$result = self::$mUser->getName();
-				break;
-			case '_age':
-				$result = microtime( true ) - $createdAt;
 				break;
 			default:
 				$success = false;
@@ -455,22 +491,25 @@ class AbuseFilterTest extends MediaWikiTestCase {
 	 */
 	public function testAgeVars( $prefix ) {
 		$varName = $prefix . '_age';
-		list( $computed, $successfully ) = self::computeExpectedTitleVariable( '_age' );
-		if ( !$successfully ) {
-			if ( $computed === null ) {
-				$this->fail( "Given unknown title-related variable $varName." );
-			} else {
-				$this->fail( "AbuseFilter variable $varName is computed wrongly." );
-			}
-		}
 
+		MWTimestamp::setFakeTime( 1514700000 );
+		self::$mTitle = Title::newFromText( 'AbuseFilter test' );
+		$page = WikiPage::factory( self::$mTitle );
+		$page->doEditContent(
+			new WikitextContent( 'AbuseFilter _age variables test' ),
+			'Testing page for AbuseFilter',
+			EDIT_NEW,
+			false,
+			self::$mUser
+		);
+
+		MWTimestamp::setFakeTime( 1514700123 );
 		$variableHolder = AbuseFilter::generateTitleVars( self::$mTitle, $prefix );
 		$actual = $variableHolder->getVar( $varName )->toNative();
-		$this->assertLessThanOrEqual(
-			// 10 seconds should be a good confidence interval
-			10,
-			abs( $actual - $computed ),
-			"AbuseFilter variable $varName is computed wrongly. Expected: $computed, actual: $actual."
+		$this->assertEquals(
+			123,
+			$actual,
+			"AbuseFilter variable $varName is computed wrongly. Expected: 123, actual: $actual."
 		);
 	}
 
@@ -483,51 +522,6 @@ class AbuseFilterTest extends MediaWikiTestCase {
 			[ 'page' ],
 			[ 'moved_from' ],
 			[ 'moved_to' ],
-		];
-	}
-
-	/**
-	 * Check that our tag validation is working properly. Note that we only need one test
-	 *   for each called function. Consistency within ChangeTags functions should be
-	 *   assured by tests in core. The test for canAddTagsAccompanyingChange and canCreateTag
-	 *   are missing because they won't actually fail, never. Resolving T173917 would
-	 *   greatly improve the situation and could help writing better tests.
-	 *
-	 * @param string $tag The tag to validate
-	 * @param string|null $error The expected error message. Null if validations should pass
-	 * @covers AbuseFilter::isAllowedTag
-	 * @dataProvider provideTags
-	 */
-	public function testIsAllowedTag( $tag, $error ) {
-		$status = AbuseFilter::isAllowedTag( $tag );
-
-		if ( !$status->isGood() ) {
-			$actualError = $status->getErrors();
-			$actualError = $actualError[0]['message'];
-		} else {
-			$actualError = null;
-			if ( $error !== null ) {
-				$this->fail( "Tag validation returned a valid status instead of the expected '$error' error." );
-			}
-		}
-
-		$this->assertSame(
-			$error,
-			$actualError,
-			"Expected message '$error', got '$actualError' while validating the tag '$tag'."
-		);
-	}
-
-	/**
-	 * Data provider for testIsAllowedTag
-	 * @return array
-	 */
-	public function provideTags() {
-		return [
-			[ 'a|b', 'tags-create-invalid-chars' ],
-			[ 'mw-undo', 'abusefilter-edit-bad-tags' ],
-			[ 'abusefilter-condition-limit', 'abusefilter-tag-reserved' ],
-			[ 'my_tag', null ],
 		];
 	}
 

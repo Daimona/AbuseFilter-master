@@ -59,6 +59,7 @@
 	"abusefilter-log-details-diff": "ענדערונגען אדורכגעפירט ביי רעדאקטירן",
 	"abusefilter-log-linkoncontribs": "שלעכט־באניצן לאג",
 	"abusefilter-log-linkoncontribs-text": "שלעכט־באניצן לאגבוך פאר {{GENDER:$1|דעם דאזיגן באניצער|דער דאזיגער באניצערין}}",
+	"abusefilter-log-linkonhistory": " באקוקן שלעכט־באניצן לאגבוך",
 	"abusefilter-log-hidden": "(איינהייט באהאלטן)",
 	"abusefilter-log-hidden-implicit": "(באהאלטן ווייל ווערסיע איז געווארן אויסגעמעקט)",
 	"abusefilter-log-cannot-see-details": "איר האט נישט ערלויבניש צו זען פרטים פון דעם ווערט.",
@@ -213,7 +214,6 @@
 	"abusefilter-edit-builder-vars-restrictions-create": "שאַפֿן באַשיצונג פון דעם בלאַט",
 	"abusefilter-edit-builder-vars-restrictions-upload": "אַרויפֿלאדן באַשיצונג פון דער טעקע",
 	"abusefilter-edit-builder-vars-file-size": "גרייס פון טעקע אין בייטן",
-	"abusefilter-edit-block-options": "פֿאַרשפאַרן-ברירות:",
 	"abusefilter-filter-log": "לעצטיקע פילטער ענדערונגען",
 	"abusefilter-history-foruser": "ענדערונגען פון $1",
 	"abusefilter-history-hidden": "פֿאַרבאָרגן",
@@ -274,6 +274,5 @@
 	"abusefilter-diff-next": "נײַערע ענדערונג",
 	"abusefilter-import-submit": "אימפארטירן דאַטן",
 	"abusefilter-group-default": "גרונטלעך",
-	"abusefilter-http-error": "א HTTP גרײַז האט פאַסירט: $1",
-	"apierror-abusefilter-badsyntax": "דער פֿילטער האט אומגילטיגן סינטאקס."
+	"abusefilter-http-error": "א HTTP גרײַז האט פאַסירט: $1"
 }

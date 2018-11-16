@@ -566,7 +566,6 @@ class AbuseFilterParserTest extends MediaWikiTestCase {
 	 *   without 0 params. They should throw a 'noparams' exception.
 	 *
 	 * @param string $func The function to test
-	 * @covers AbuseFilterParser::checkEnoughArguments
 	 * @covers AbuseFilterParser::funcLc
 	 * @covers AbuseFilterParser::funcUc
 	 * @covers AbuseFilterParser::funcLen
@@ -627,7 +626,6 @@ class AbuseFilterParserTest extends MediaWikiTestCase {
 	 *   They should throw a 'notenoughargs' exception.
 	 *
 	 * @param string $func The function to test
-	 * @covers AbuseFilterParser::checkEnoughArguments
 	 * @covers AbuseFilterParser::funcGetMatches
 	 * @covers AbuseFilterParser::funcIPInRange
 	 * @covers AbuseFilterParser::funcContainsAny
@@ -675,7 +673,6 @@ class AbuseFilterParserTest extends MediaWikiTestCase {
 	 *   They should throw a 'notenoughargs' exception.
 	 *
 	 * @param string $func The function to test
-	 * @covers AbuseFilterParser::checkEnoughArguments
 	 * @covers AbuseFilterParser::funcStrReplace
 	 * @dataProvider threeParamsFuncs
 	 * @expectedException AFPUserVisibleException

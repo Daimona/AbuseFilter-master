@@ -27,7 +27,7 @@ class AFComputedVariable {
 	 *
 	 * @return object
 	 */
-	public function parseNonEditWikitext( $wikitext, Article $article ) {
+	public function parseNonEditWikitext( $wikitext, $article ) {
 		static $cache = [];
 
 		$cacheKey = md5( $wikitext ) . ':' . $article->getTitle()->getPrefixedText();
@@ -71,20 +71,23 @@ class AFComputedVariable {
 			self::$userCache = [];
 		}
 
-		$ret = $user;
 		if ( $user instanceof User ) {
-			self::$userCache[$username] = $user;
-		} elseif ( IP::isIPAddress( $username ) ) {
-			$ret = new User;
-			$ret->setName( $username );
-			self::$userCache[$username] = $ret;
-		} else {
-			$ret = User::newFromName( $username );
-			$ret->load();
-			self::$userCache[$username] = $ret;
+			$userCache[$username] = $user;
+			return $user;
 		}
 
-		return $ret;
+		if ( IP::isIPAddress( $username ) ) {
+			$u = new User;
+			$u->setName( $username );
+			self::$userCache[$username] = $u;
+			return $u;
+		}
+
+		$user = User::newFromName( $username );
+		$user->load();
+		self::$userCache[$username] = $user;
+
+		return $user;
 	}
 
 	/**
@@ -115,7 +118,7 @@ class AFComputedVariable {
 	 * @param Article $article
 	 * @return array
 	 */
-	public static function getLinksFromDB( Article $article ) {
+	public static function getLinksFromDB( $article ) {
 		// Stolen from ConfirmEdit, SimpleCaptcha::getLinksFromTracker
 		$id = $article->getId();
 		if ( !$id ) {
@@ -142,7 +145,7 @@ class AFComputedVariable {
 	 * @throws MWException
 	 * @throws AFPException
 	 */
-	public function compute( AbuseFilterVariableHolder $vars ) {
+	public function compute( $vars ) {
 		$parameters = $this->mParameters;
 		$result = null;
 
@@ -338,7 +341,9 @@ class AFComputedVariable {
 				$action = $parameters['action'];
 				$title = Title::makeTitle( $parameters['namespace'], $parameters['title'] );
 
-				$result = $title->getRestrictions( $action );
+				$rights = $title->getRestrictions( $action );
+				$rights = count( $rights ) ? $rights : [];
+				$result = $rights;
 				break;
 			case 'simple-user-accessor':
 				$user = $parameters['user'];
@@ -434,11 +439,12 @@ class AFComputedVariable {
 		}
 
 		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
+		$fname = __METHOD__;
 
 		return $cache->getWithSetCallback(
 			$cache->makeKey( 'last-10-authors', 'revision', $title->getLatestRevID() ),
 			$cache::TTL_MINUTE,
-			function ( $oldValue, &$ttl, array &$setOpts ) use ( $title ) {
+			function ( $oldValue, &$ttl, array &$setOpts ) use ( $title, $fname ) {
 				$dbr = wfGetDB( DB_REPLICA );
 				$setOpts += Database::getCacheSetOptions( $dbr );
 				// Get the last 100 edit authors with a trivial query (avoid T116557)
@@ -447,9 +453,9 @@ class AFComputedVariable {
 					$revQuery['tables'],
 					$revQuery['fields']['rev_user_text'],
 					[ 'rev_page' => $title->getArticleID() ],
-					__METHOD__,
+					$fname,
 					// Some pages have < 10 authors but many revisions (e.g. bot pages)
-					[ 'ORDER BY' => 'rev_timestamp DESC',
+					[ 'ORDER BY' => 'rev_timestamp DESC, rev_id DESC',
 						'LIMIT' => 100,
 						// Force index per T116557
 						'USE INDEX' => [ 'revision' => 'page_timestamp' ],

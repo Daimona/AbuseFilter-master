@@ -9,7 +9,7 @@ class AbuseFilterPreAuthenticationProvider extends AbstractPreAuthenticationProv
 	 * @param AuthenticationRequest[] $reqs
 	 * @return StatusValue
 	 */
-	public function testForAccountCreation( User $user, User $creator, array $reqs ) {
+	public function testForAccountCreation( $user, $creator, array $reqs ) {
 		return $this->testUser( $user, $creator, false );
 	}
 
@@ -19,7 +19,7 @@ class AbuseFilterPreAuthenticationProvider extends AbstractPreAuthenticationProv
 	 * @param array $options
 	 * @return StatusValue
 	 */
-	public function testUserForCreation( User $user, $autocreate, array $options = [] ) {
+	public function testUserForCreation( $user, $autocreate, array $options = [] ) {
 		// if this is not an autocreation, testForAccountCreation already handled it
 		if ( $autocreate ) {
 			return $this->testUser( $user, $user, true );
@@ -33,7 +33,7 @@ class AbuseFilterPreAuthenticationProvider extends AbstractPreAuthenticationProv
 	 * @param bool $autocreate Is this an autocreation?
 	 * @return StatusValue
 	 */
-	protected function testUser( User $user, User $creator, $autocreate ) {
+	protected function testUser( $user, $creator, $autocreate ) {
 		if ( $user->getName() == wfMessage( 'abusefilter-blocker' )->inContentLanguage()->text() ) {
 			return StatusValue::newFatal( 'abusefilter-accountreserved' );
 		}

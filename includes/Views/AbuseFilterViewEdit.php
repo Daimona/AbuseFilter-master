@@ -6,7 +6,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 	 * @param SpecialAbuseFilter $page
 	 * @param array $params
 	 */
-	public function __construct( SpecialAbuseFilter $page, $params ) {
+	public function __construct( $page, $params ) {
 		parent::__construct( $page, $params );
 		$this->mFilter = $page->mFilter;
 		$this->mHistoryID = $page->mHistoryID;
@@ -19,6 +19,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 		$user = $this->getUser();
 		$out = $this->getOutput();
 		$request = $this->getRequest();
+		$config = $this->getConfig();
 		$out->setPageTitle( $this->msg( 'abusefilter-edit' ) );
 		$out->addHelpLink( 'Extension:AbuseFilter/Rules format' );
 
@@ -41,8 +42,8 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 			}
 		}
 
-		// Add the default warning messages in a JS variable
-		$this->exposeWarningMessages();
+		// Add the default warning and disallow messages in a JS variable
+		$this->exposeMessages();
 
 		if ( $filter == 'new' && !$this->canEdit() ) {
 			$out->addHTML(
@@ -300,12 +301,10 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 					array_keys( $throttledActions )
 				);
 
-				$flags .= $out->parse(
-					Html::warningBox(
-						$this->msg( 'abusefilter-edit-throttled-warning' )
-							->plaintextParams( $lang->commaList( $throttledActions ) )
-							->text()
-					)
+				$flags .= Html::warningBox(
+					$this->msg( 'abusefilter-edit-throttled-warning' )
+					->plaintextParams( $lang->commaList( $throttledActions ) )
+					->parseAsBlock()
 				);
 			}
 		}
@@ -567,47 +566,36 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 							'label' => $this->msg( 'abusefilter-edit-throttle-period' )->text()
 						]
 					);
-				$throttleFields['abusefilter-edit-throttle-groups'] =
+
+				$throttleConfig = [
+					'values' => $throttleGroups,
+					'label' => $this->msg( 'abusefilter-edit-throttle-groups' )->parse(),
+					'disabled' => $readOnlyAttrib
+				];
+				$this->getOutput()->addJsConfigVars( 'throttleConfig', $throttleConfig );
+
+				$hiddenGroups =
 					new OOUI\FieldLayout(
-						new OOUI\CheckboxMultiselectInputWidget( [
-							'name' => 'wpFilterThrottleGroups[]',
-							'value' => $throttleGroups,
-							'options' => [
-								[
-									'data' => 'ip',
-									'label' => $this->msg( 'abusefilter-edit-throttle-ip' )->text()
-								],
-								[
-									'data' => 'user',
-									'label' => $this->msg( 'abusefilter-edit-throttle-user' )->text()
-								],
-								[
-									'data' => 'range',
-									'label' => $this->msg( 'abusefilter-edit-throttle-range' )->text()
-								],
-								[
-									'data' => 'creationdate',
-									'label' => $this->msg( 'abusefilter-edit-throttle-creationdate' )->text()
-								],
-								[
-									'data' => 'editcount',
-									'label' => $this->msg( 'abusefilter-edit-throttle-editcount' )->text()
-								],
-								[
-									'data' => 'site',
-									'label' => $this->msg( 'abusefilter-edit-throttle-site' )->text()
-								],
-								[
-									'data' => 'page',
-									'label' => $this->msg( 'abusefilter-edit-throttle-page' )->text()
-								]
-							]
-						] + $readOnlyAttrib ),
+						new OOUI\MultilineTextInputWidget( [
+							'name' => 'wpFilterThrottleGroups',
+							'value' => implode( "\n", $throttleGroups ),
+							'rows' => 5,
+							'placeholder' => $this->msg( 'abusefilter-edit-throttle-hidden-placeholder' )->text(),
+							'infusable' => true,
+							'id' => 'mw-abusefilter-hidden-throttle-field'
+						] + $readOnlyAttrib
+						),
 						[
-							'label' => $this->msg( 'abusefilter-edit-throttle-groups' )->text(),
-							'align' => 'right'
+							'label' => new OOUI\HtmlSnippet(
+								$this->msg( 'abusefilter-edit-throttle-groups' )->parse()
+							),
+							'align' => 'top',
+							'id' => 'mw-abusefilter-hidden-throttle'
 						]
 					);
+
+				$throttleFields['abusefilter-edit-throttle-groups'] = $hiddenGroups;
+
 				$throttleSettings .=
 					Xml::tags(
 						'div',
@@ -615,58 +603,74 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 						new OOUI\FieldsetLayout( [ 'items' => $throttleFields ] )
 					);
 				return $throttleSettings;
+			case 'disallow':
 			case 'warn':
 				$output = '';
+				$formName = $action === 'warn' ? 'wpFilterActionWarn' : 'wpFilterActionDisallow';
 				$checkbox =
 					new OOUI\FieldLayout(
 						new OOUI\CheckboxInputWidget( [
-							'name' => 'wpFilterActionWarn',
-							'id' => 'mw-abusefilter-action-checkbox-warn',
+							'name' => $formName,
+							// mw-abusefilter-action-checkbox-warn, mw-abusefilter-action-checkbox-disallow
+							'id' => "mw-abusefilter-action-checkbox-$action",
 							'selected' => $set,
 							'classes' => [ 'mw-abusefilter-action-checkbox' ]
 						] + $readOnlyAttrib
 						),
 						[
-							'label' => $this->msg( 'abusefilter-edit-action-warn' )->text(),
+							// abusefilter-edit-action-warn, abusefilter-edit-action-disallow
+							'label' => $this->msg( "abusefilter-edit-action-$action" )->text(),
 							'align' => 'inline'
 						]
 					);
 				$output .= $checkbox;
-				if ( $set ) {
-					$warnMsg = $parameters[0];
+				$defaultWarnMsg = $config->get( 'AbuseFilterDefaultWarningMessage' );
+				$defaultDisallowMsg = $config->get( 'AbuseFilterDefaultDisallowMessage' );
+
+				if ( $set && isset( $parameters[0] ) ) {
+					$msg = $parameters[0];
 				} elseif (
 					$row &&
-					isset( $row->af_group ) && $row->af_group &&
-					isset( $config->get( 'AbuseFilterDefaultWarningMessage' )[$row->af_group] )
+					isset( $row->af_group ) && $row->af_group && (
+						( $action === 'warn' && isset( $defaultWarnMsg[$row->af_group] ) ) ||
+						( $action === 'disallow' && isset( $defaultDisallowMsg[$row->af_group] ) )
+					)
 				) {
-					$warnMsg = $config->get( 'AbuseFilterDefaultWarningMessage' )[$row->af_group];
+					$msg = $action === 'warn' ? $defaultWarnMsg[$row->af_group] :
+						$defaultDisallowMsg[$row->af_group];
 				} else {
-					$warnMsg = 'abusefilter-warning';
+					$msg = $action === 'warn' ? 'abusefilter-warning' : 'abusefilter-disallowed';
 				}
 
-				$warnFields = [];
-				$warnFields['abusefilter-edit-warn-message'] =
-					$this->getExistingSelector( $warnMsg, !empty( $readOnlyAttrib ) );
-				$warnFields['abusefilter-edit-warn-other-label'] =
+				$fields["abusefilter-edit-$action-message"] =
+					$this->getExistingSelector( $msg, !empty( $readOnlyAttrib ), $action );
+				$otherFieldName = $action === 'warn' ? 'wpFilterWarnMessageOther'
+					: 'wpFilterDisallowMessageOther';
+
+				$fields["abusefilter-edit-$action-other-label"] =
 					new OOUI\FieldLayout(
 						new OOUI\TextInputWidget( [
-							'name' => 'wpFilterWarnMessageOther',
-							'value' => $warnMsg,
-							'id' => 'mw-abusefilter-warn-message-other',
+							'name' => $otherFieldName,
+							'value' => $msg,
+							// mw-abusefilter-warn-message-other, mw-abusefilter-disallow-message-other
+							'id' => "mw-abusefilter-$action-message-other",
 							'infusable' => true
 							] + $readOnlyAttrib
 						),
 						[
 							'label' => new OOUI\HtmlSnippet(
-								$this->msg( 'abusefilter-edit-warn-other-label' )->parse()
+								// abusefilter-edit-warn-other-label, abusefilter-edit-disallow-other-label
+								$this->msg( "abusefilter-edit-$action-other-label" )->parse()
 							)
 						]
 					);
 
 				$previewButton =
 					new OOUI\ButtonInputWidget( [
-						'label' => $this->msg( 'abusefilter-edit-warn-preview' )->text(),
-						'id' => 'mw-abusefilter-warn-preview-button',
+						// abusefilter-edit-warn-preview, abusefilter-edit-disallow-preview
+						'label' => $this->msg( "abusefilter-edit-$action-preview" )->text(),
+						// mw-abusefilter-warn-preview-button, mw-abusefilter-disallow-preview-button
+						'id' => "mw-abusefilter-$action-preview-button",
 						'infusable' => true,
 						'flags' => 'progressive'
 						]
@@ -676,8 +680,10 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 				if ( $this->getUser()->isAllowed( 'editinterface' ) ) {
 					$editButton =
 						new OOUI\ButtonInputWidget( [
-							'label' => $this->msg( 'abusefilter-edit-warn-edit' )->text(),
-							'id' => 'mw-abusefilter-warn-edit-button'
+							// abusefilter-edit-warn-edit, abusefilter-edit-disallow-edit
+							'label' => $this->msg( "abusefilter-edit-$action-edit" )->text(),
+							// mw-abusefilter-warn-edit-button, mw-abusefilter-disallow-edit-button
+							'id' => "mw-abusefilter-$action-edit-button"
 							]
 						);
 					$buttonGroup =
@@ -686,7 +692,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 								new OOUI\HorizontalLayout( [
 									'items' => [ $previewButton, $editButton ],
 									'classes' => [
-										'mw-abusefilter-warn-preview-buttons',
+										'mw-abusefilter-preview-buttons',
 										'mw-abusefilter-javascript-tools'
 									]
 								] )
@@ -694,15 +700,20 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 				}
 				$previewHolder = Xml::tags(
 					'div',
-					[ 'id' => 'mw-abusefilter-warn-preview', 'style' => 'display:none' ],
+					[
+						// mw-abusefilter-warn-preview, mw-abusefilter-disallow-preview
+						'id' => "mw-abusefilter-$action-preview",
+						'style' => 'display:none'
+					],
 					''
 				);
-				$warnFields['abusefilter-edit-warn-actions'] = $buttonGroup;
+				$fields["abusefilter-edit-$action-actions"] = $buttonGroup;
 				$output .=
 					Xml::tags(
 						'div',
-						[ 'id' => 'mw-abusefilter-warn-parameters' ],
-						new OOUI\FieldsetLayout( [ 'items' => $warnFields ] )
+						// mw-abusefilter-warn-parameters, mw-abusefilter-disallow-parameters
+						[ 'id' => "mw-abusefilter-$action-parameters" ],
+						new OOUI\FieldsetLayout( [ 'items' => $fields ] )
 					) . $previewHolder;
 
 				return $output;
@@ -731,10 +742,9 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 				$output .= $checkbox;
 
 				$tagConfig = [
-					'tagUsed' => $tags,
-					'tagLabel' => $this->msg( 'abusefilter-edit-tag-tag' )->parse(),
-					'tagPlaceholder' => $this->msg( 'abusefilter-edit-tag-placeholder' )->text(),
-					'tagDisabled' => $readOnlyAttrib
+					'values' => $tags,
+					'label' => $this->msg( 'abusefilter-edit-tag-tag' )->parse(),
+					'disabled' => $readOnlyAttrib
 				];
 				$this->getOutput()->addJsConfigVars( 'tagConfig', $tagConfig );
 
@@ -746,7 +756,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 							'rows' => 5,
 							'placeholder' => $this->msg( 'abusefilter-edit-tag-hidden-placeholder' )->text(),
 							'infusable' => true,
-							'id' => 'mw-abusefilter-hidden-tags-field'
+							'id' => 'mw-abusefilter-hidden-tag-field'
 						] + $readOnlyAttrib
 						),
 						[
@@ -754,7 +764,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 								$this->msg( 'abusefilter-edit-tag-tag' )->parse()
 							),
 							'align' => 'top',
-							'id' => 'mw-abusefilter-hidden-tags'
+							'id' => 'mw-abusefilter-hidden-tag'
 						]
 					);
 				$output .=
@@ -800,22 +810,6 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 						]
 					);
 				$output .= $checkbox;
-				if ( $config->get( 'BlockAllowsUTEdit' ) === true ) {
-					$talkCheckbox =
-						new OOUI\FieldLayout(
-							new OOUI\CheckboxInputWidget( [
-								'name' => 'wpFilterBlockTalk',
-								'id' => 'mw-abusefilter-action-checkbox-blocktalk',
-								'selected' => isset( $blockTalk ) && $blockTalk == 'blocktalk',
-								'classes' => [ 'mw-abusefilter-action-checkbox' ]
-							] + $readOnlyAttrib
-							),
-							[
-								'label' => $this->msg( 'abusefilter-edit-action-blocktalk' )->text(),
-								'align' => 'inline'
-							]
-						);
-				}
 
 				$suggestedBlocks = Xml::listDropDownOptionsOoui( $suggestedBlocks );
 
@@ -835,17 +829,33 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 						'disabled' => !$this->canEditFilter( $row )
 					] );
 
+				$blockOptions = [];
 				if ( $config->get( 'BlockAllowsUTEdit' ) === true ) {
-					$durations['abusefilter-edit-block-options'] = $talkCheckbox;
+					$talkCheckbox =
+						new OOUI\FieldLayout(
+							new OOUI\CheckboxInputWidget( [
+								'name' => 'wpFilterBlockTalk',
+								'id' => 'mw-abusefilter-action-checkbox-blocktalk',
+								'selected' => isset( $blockTalk ) && $blockTalk == 'blocktalk',
+								'classes' => [ 'mw-abusefilter-action-checkbox' ]
+							] + $readOnlyAttrib
+							),
+							[
+								'label' => $this->msg( 'abusefilter-edit-action-blocktalk' )->text(),
+								'align' => 'left'
+							]
+						);
+
+					$blockOptions['abusefilter-edit-block-options'] = $talkCheckbox;
 				}
-				$durations['abusefilter-edit-block-anon-durations'] =
+				$blockOptions['abusefilter-edit-block-anon-durations'] =
 					new OOUI\FieldLayout(
 						$anonDuration,
 						[
 							'label' => $this->msg( 'abusefilter-edit-block-anon-durations' )->text()
 						]
 					);
-				$durations['abusefilter-edit-block-user-durations'] =
+				$blockOptions['abusefilter-edit-block-user-durations'] =
 					new OOUI\FieldLayout(
 						$userDuration,
 						[
@@ -856,7 +866,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 				$output .= Xml::tags(
 						'div',
 						[ 'id' => 'mw-abusefilter-block-parameters' ],
-						new OOUI\FieldsetLayout( [ 'items' => $durations ] )
+						new OOUI\FieldsetLayout( [ 'items' => $blockOptions ] )
 					);
 
 				return $output;
@@ -885,6 +895,7 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 							'align' => 'inline'
 						]
 					);
+				$thisAction = $thisAction;
 				return $thisAction;
 		}
 	}
@@ -892,30 +903,47 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 	/**
 	 * @param string $warnMsg
 	 * @param bool $readOnly
+	 * @param string $action
 	 * @return \OOUI\FieldLayout
 	 */
-	public function getExistingSelector( $warnMsg, $readOnly = false ) {
+	public function getExistingSelector( $warnMsg, $readOnly = false, $action = 'warn' ) {
+		if ( $action === 'warn' ) {
+			$action = 'warning';
+			$formId = 'warn';
+			$inputName = 'wpFilterWarnMessage';
+		} elseif ( $action === 'disallow' ) {
+			$action = 'disallowed';
+			$formId = 'disallow';
+			$inputName = 'wpFilterDisallowMessage';
+		} else {
+			throw new MWException( "Unexpected action value $action" );
+		}
+
 		$existingSelector =
 			new OOUI\DropdownInputWidget( [
-				'name' => 'wpFilterWarnMessage',
-				'id' => 'mw-abusefilter-warn-message-existing',
-				'value' => $warnMsg == 'abusefilter-warning' ? 'abusefilter-warning' : 'other',
+				'name' => $inputName,
+				// mw-abusefilter-warn-message-existing, mw-abusefilter-disallow-message-existing
+				'id' => "mw-abusefilter-$formId-message-existing",
+				// abusefilter-warning, abusefilter-disallowed
+				'value' => $warnMsg == "abusefilter-$action" ? "abusefilter-$action" : 'other',
 				'infusable' => true
 			] );
 
-		$options = [ 'abusefilter-warning' => 'abusefilter-warning' ];
+		// abusefilter-warning, abusefilter-disallowed
+		$options = [ "abusefilter-$action" => "abusefilter-$action" ];
 
 		if ( $readOnly ) {
 			$existingSelector->setDisabled( true );
 		} else {
 			// Find other messages.
 			$dbr = wfGetDB( DB_REPLICA );
+			$pageTitlePrefix = "Abusefilter-$action";
 			$res = $dbr->select(
 				'page',
 				[ 'page_title' ],
 				[
 					'page_namespace' => 8,
-					'page_title LIKE ' . $dbr->addQuotes( 'Abusefilter-warning%' )
+					'page_title LIKE ' . $dbr->addQuotes( $pageTitlePrefix . '%' )
 				],
 				__METHOD__
 			);
@@ -926,13 +954,14 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 					$existingSelector->setValue( $lang->lcfirst( $warnMsg ) );
 				}
 
-				if ( $row->page_title != 'Abusefilter-warning' ) {
+				if ( $row->page_title != "Abusefilter-$action" ) {
 					$options += [ $lang->lcfirst( $row->page_title ) => $lang->lcfirst( $row->page_title ) ];
 				}
 			}
 		}
 
-		$options += [ $this->msg( 'abusefilter-edit-warn-other' )->text() => 'other' ];
+		// abusefilter-edit-warn-other, abusefilter-edit-disallow-other
+		$options += [ $this->msg( "abusefilter-edit-$formId-other" )->text() => 'other' ];
 
 		$options = Xml::listDropDownOptionsOoui( $options );
 		$existingSelector->setOptions( $options );
@@ -941,7 +970,8 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 			new OOUI\FieldLayout(
 				$existingSelector,
 				[
-					'label' => $this->msg( 'abusefilter-edit-warn-message' )->text()
+					// abusefilter-edit-warn-message, abusefilter-edit-disallow-message
+					'label' => $this->msg( "abusefilter-edit-$formId-message" )->text()
 				]
 			);
 
@@ -1150,7 +1180,18 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 						// We need to load the parameters
 						$throttleCount = $request->getIntOrNull( 'wpFilterThrottleCount' );
 						$throttlePeriod = $request->getIntOrNull( 'wpFilterThrottlePeriod' );
-						$throttleGroups = $request->getArray( 'wpFilterThrottleGroups' );
+						// First explode with \n, which is the delimiter used in the textarea
+						$rawGroups = explode( "\n", $request->getText( 'wpFilterThrottleGroups' ) );
+						// Trim any space, both as an actual group and inside subgroups
+						$throttleGroups = [];
+						foreach ( $rawGroups as $group ) {
+							if ( strpos( $group, ',' ) !== false ) {
+								$subGroups = explode( ',', $group );
+								$throttleGroups[] = implode( ',', array_map( 'trim', $subGroups ) );
+							} elseif ( trim( $group ) !== '' ) {
+								$throttleGroups[] = trim( $group );
+							}
+						}
 
 						$parameters[0] = $this->mFilter;
 						$parameters[1] = "$throttleCount,$throttlePeriod";
@@ -1168,6 +1209,14 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 							'blocktalk' : 'noTalkBlockSet';
 						$parameters[1] = $request->getVal( 'wpBlockAnonDuration' );
 						$parameters[2] = $request->getVal( 'wpBlockUserDuration' );
+					} elseif ( $action == 'disallow' ) {
+						$specMsg = $request->getVal( 'wpFilterDisallowMessage' );
+
+						if ( $specMsg == 'other' ) {
+							$specMsg = $request->getVal( 'wpFilterDisallowMessageOther' );
+						}
+
+						$parameters[0] = $specMsg;
 					} elseif ( $action == 'tag' ) {
 						$parameters = explode( ',', trim( $request->getText( 'wpFilterTags' ) ) );
 					}
@@ -1209,12 +1258,16 @@ class AbuseFilterViewEdit extends AbuseFilterView {
 	}
 
 	/**
-	 * @return null
+	 * Exports the default warning and disallow messages to a JS variable
 	 */
-	protected function exposeWarningMessages() {
+	protected function exposeMessages() {
 		$this->getOutput()->addJsConfigVars(
 			'wgAbuseFilterDefaultWarningMessage',
 			$this->getConfig()->get( 'AbuseFilterDefaultWarningMessage' )
+		);
+		$this->getOutput()->addJsConfigVars(
+			'wgAbuseFilterDefaultDisallowMessage',
+			$this->getConfig()->get( 'AbuseFilterDefaultDisallowMessage' )
 		);
 	}
 }

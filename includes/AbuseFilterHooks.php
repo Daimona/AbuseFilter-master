@@ -1,7 +1,6 @@
 <?php
 
 use MediaWiki\Linker\LinkRenderer;
-use MediaWiki\Logger\LoggerFactory;
 use MediaWiki\MediaWikiServices;
 use Wikimedia\Rdbms\Database;
 
@@ -56,7 +55,7 @@ class AbuseFilterHooks {
 	) {
 		$text = AbuseFilter::contentToString( $content );
 
-		$filterStatus = self::filterEdit( $context, $content, $text, $status, $summary );
+		$filterStatus = self::filterEdit( $context, $content, $text, $status, $summary, $minoredit );
 
 		if ( !$filterStatus->isOK() ) {
 			// Produce a useful error message for API edits
@@ -72,20 +71,13 @@ class AbuseFilterHooks {
 	 * @param string $text new page content (subject of filtering)
 	 * @param Status $status Error message to return
 	 * @param string $summary Edit summary for page
+	 * @param bool $minoredit whether this is a minor edit according to the user.
 	 * @return Status
 	 */
 	public static function filterEdit( IContextSource $context, $content, $text,
-		Status $status, $summary
+		Status $status, $summary, $minoredit
 	) {
 		$title = $context->getTitle();
-		if ( $title === null ) {
-			// Previously, we would just go ahead with a null title. However, apart from making all
-			// title vars useless, this would create problems since both self::newVariableHolderForEdit and
-			// AbuseFilter::filterAction expect $title to be instanceof Title, without further checks.
-			$logger = LoggerFactory::getInstance( 'AbuseFilter' );
-			$logger->debug( 'AbuseFilterHooks::filterEdit received an invalid title.' );
-			return Status::newGood();
-		}
 
 		self::$successful_action_vars = false;
 		self::$last_edit_page = false;
@@ -94,7 +86,7 @@ class AbuseFilterHooks {
 
 		$oldcontent = null;
 
-		if ( $title->canExist() && $title->exists() ) {
+		if ( ( $title instanceof Title ) && $title->canExist() && $title->exists() ) {
 			// Make sure we load the latest text saved in database (bug 31656)
 			$page = $context->getWikiPage();
 			$revision = $page->getRevision();
@@ -128,7 +120,7 @@ class AbuseFilterHooks {
 			$user, $title, $page, $summary, $content, $text, $oldcontent
 		);
 
-		$filter_result = AbuseFilter::filterAction( $vars, $title );
+		$filter_result = AbuseFilter::filterAction( $vars, $title, 'default', $user );
 		if ( !$filter_result->isOK() ) {
 			$status->merge( $filter_result );
 
@@ -238,8 +230,8 @@ class AbuseFilterHooks {
 	 * @param int $baseRevId
 	 */
 	public static function onPageContentSaveComplete(
-		WikiPage $wikiPage, User $user, $content, $summary, $minoredit, $watchthis, $sectionanchor,
-		$flags, Revision $revision, Status $status, $baseRevId
+		WikiPage $wikiPage, $user, $content, $summary, $minoredit, $watchthis, $sectionanchor,
+		$flags, $revision, $status, $baseRevId
 	) {
 		if ( !self::$successful_action_vars || !$revision ) {
 			self::$successful_action_vars = false;
@@ -308,7 +300,7 @@ class AbuseFilterHooks {
 	 * @param User $user
 	 * @param array &$promote
 	 */
-	public static function onGetAutoPromoteGroups( User $user, &$promote ) {
+	public static function onGetAutoPromoteGroups( $user, &$promote ) {
 		if ( $promote ) {
 			$key = AbuseFilter::autoPromoteBlockKey( $user );
 			$blocked = (bool)ObjectCache::getInstance( 'hash' )->getWithSetCallback(
@@ -345,7 +337,7 @@ class AbuseFilterHooks {
 		$vars->setVar( 'SUMMARY', $reason );
 		$vars->setVar( 'ACTION', 'move' );
 
-		$result = AbuseFilter::filterAction( $vars, $oldTitle );
+		$result = AbuseFilter::filterAction( $vars, $oldTitle, 'default', $user );
 		$status->merge( $result );
 
 		return $result->isOK();
@@ -359,8 +351,7 @@ class AbuseFilterHooks {
 	 * @param Status $status
 	 * @return bool
 	 */
-	public static function onArticleDelete( WikiPage $article, User $user, $reason, &$error,
-		Status $status ) {
+	public static function onArticleDelete( $article, $user, $reason, &$error, $status ) {
 		$vars = new AbuseFilterVariableHolder;
 
 		$vars->addHolders(
@@ -371,7 +362,7 @@ class AbuseFilterHooks {
 		$vars->setVar( 'SUMMARY', $reason );
 		$vars->setVar( 'ACTION', 'delete' );
 
-		$filter_result = AbuseFilter::filterAction( $vars, $article->getTitle() );
+		$filter_result = AbuseFilter::filterAction( $vars, $article->getTitle(), 'default', $user );
 
 		$status->merge( $filter_result );
 		$error = $filter_result->isOK() ? '' : $filter_result->getHTML();
@@ -382,7 +373,7 @@ class AbuseFilterHooks {
 	/**
 	 * @param RecentChange $recentChange
 	 */
-	public static function onRecentChangeSave( RecentChange $recentChange ) {
+	public static function onRecentChangeSave( $recentChange ) {
 		$title = Title::makeTitle(
 			$recentChange->getAttribute( 'rc_namespace' ),
 			$recentChange->getAttribute( 'rc_title' )
@@ -423,6 +414,7 @@ class AbuseFilterHooks {
 	private static function fetchAllTags( array &$tags, $enabled ) {
 		$services = MediaWikiServices::getInstance();
 		$cache = $services->getMainWANObjectCache();
+		$fname = __METHOD__;
 
 		$tags = $cache->getWithSetCallback(
 			// Key to store the cached value under
@@ -432,7 +424,7 @@ class AbuseFilterHooks {
 			$cache::TTL_MINUTE,
 
 			// Function that derives the new key value
-			function ( $oldValue, &$ttl, array &$setOpts ) use ( $enabled, $tags ) {
+			function ( $oldValue, &$ttl, array &$setOpts ) use ( $enabled, $tags, $fname ) {
 				global $wgAbuseFilterCentralDB, $wgAbuseFilterIsCentral;
 
 				$dbr = wfGetDB( DB_REPLICA );
@@ -449,7 +441,7 @@ class AbuseFilterHooks {
 					[ 'abuse_filter_action', 'abuse_filter' ],
 					'afa_parameters',
 					$where,
-					__METHOD__,
+					$fname,
 					[],
 					[ 'abuse_filter' => [ 'INNER JOIN', 'afa_filter=af_id' ] ]
 				);
@@ -467,7 +459,7 @@ class AbuseFilterHooks {
 						[ 'abuse_filter_action', 'abuse_filter' ],
 						'afa_parameters',
 						$where,
-						__METHOD__,
+						$fname,
 						[],
 						[ 'abuse_filter' => [ 'INNER JOIN', 'afa_filter=af_id' ] ]
 					);
@@ -593,18 +585,6 @@ class AbuseFilterHooks {
 			$updater->addExtensionUpdate( [
 				'addPgField', 'abuse_filter', 'af_global', 'SMALLINT NOT NULL DEFAULT 0' ] );
 			$updater->addExtensionUpdate( [
-				'addPgField', 'abuse_filter_log', 'afl_wiki', 'TEXT' ] );
-			$updater->addExtensionUpdate( [
-				'addPgField', 'abuse_filter_log', 'afl_deleted', 'SMALLINT' ] );
-			$updater->addExtensionUpdate( [
-				'changeField', 'abuse_filter_log', 'afl_filter', 'TEXT', '' ] );
-			$updater->addExtensionUpdate( [
-				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_ip', "(afl_ip)" ] );
-			$updater->addExtensionUpdate( [
-				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_wiki', "(afl_wiki)" ] );
-			$updater->addExtensionUpdate( [
-				'changeField', 'abuse_filter_log', 'afl_namespace', "INTEGER", '' ] );
-			$updater->addExtensionUpdate( [
 				'addPgField', 'abuse_filter', 'af_group', "TEXT NOT NULL DEFAULT 'default'" ] );
 			$updater->addExtensionUpdate( [
 				'addPgExtIndex', 'abuse_filter', 'abuse_filter_group_enabled_id',
@@ -612,6 +592,64 @@ class AbuseFilterHooks {
 			] );
 			$updater->addExtensionUpdate( [
 				'addPgField', 'abuse_filter_history', 'afh_group', "TEXT" ] );
+			$updater->addExtensionUpdate( [
+				'addPgField', 'abuse_filter_log', 'afl_wiki', 'TEXT' ] );
+			$updater->addExtensionUpdate( [
+				'addPgField', 'abuse_filter_log', 'afl_deleted', 'SMALLINT' ] );
+			$updater->addExtensionUpdate( [
+				'setDefault', 'abuse_filter_log', 'afl_deleted', '0' ] );
+			$updater->addExtensionUpdate( [
+				'changeNullableField', 'abuse_filter_log', 'afl_deleted', 'NOT NULL', true ] );
+			$updater->addExtensionUpdate( [
+				'addPgField', 'abuse_filter_log', 'afl_patrolled_by', 'INTEGER' ] );
+			$updater->addExtensionUpdate( [
+				'addPgField', 'abuse_filter_log', 'afl_rev_id', 'INTEGER' ] );
+			$updater->addExtensionUpdate( [
+				'addPgField', 'abuse_filter_log', 'afl_log_id', 'INTEGER' ] );
+			$updater->addExtensionUpdate( [
+				'changeField', 'abuse_filter_log', 'afl_filter', 'TEXT', '' ] );
+			$updater->addExtensionUpdate( [
+				'changeField', 'abuse_filter_log', 'afl_namespace', "INTEGER", '' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_filter' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_ip' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_title' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_user' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_user_text' ] );
+			$updater->addExtensionUpdate( [
+				'dropPgIndex', 'abuse_filter_log', 'abuse_filter_log_wiki' ] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_filter_timestamp',
+				'(afl_filter,afl_timestamp)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_user_timestamp',
+				'(afl_user,afl_user_text,afl_timestamp)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_page_timestamp',
+				'(afl_namespace,afl_title,afl_timestamp)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_ip_timestamp',
+				'(afl_ip, afl_timestamp)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_rev_id',
+				'(afl_rev_id)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_log_id',
+				'(afl_log_id)'
+			] );
+			$updater->addExtensionUpdate( [
+				'addPgExtIndex', 'abuse_filter_log', 'abuse_filter_log_wiki_timestamp',
+				'(afl_wiki,afl_timestamp)'
+			] );
 		}
 
 		$updater->addExtensionUpdate( [ [ __CLASS__, 'createAbuseFilterUser' ] ] );
@@ -621,7 +659,7 @@ class AbuseFilterHooks {
 	 * Updater callback to create the AbuseFilter user after the user tables have been updated.
 	 * @param DatabaseUpdater $updater
 	 */
-	public static function createAbuseFilterUser( DatabaseUpdater $updater ) {
+	public static function createAbuseFilterUser( $updater ) {
 		$username = wfMessage( 'abusefilter-blocker' )->inContentLanguage()->text();
 		$user = User::newFromName( $username );
 
@@ -639,7 +677,7 @@ class AbuseFilterHooks {
 	 * @param array &$tools
 	 * @param SpecialPage $sp for context
 	 */
-	public static function onContributionsToolLinks( $id, Title $nt, array &$tools, SpecialPage $sp ) {
+	public static function onContributionsToolLinks( $id, $nt, array &$tools, SpecialPage $sp ) {
 		$username = $nt->getText();
 		if ( $sp->getUser()->isAllowed( 'abusefilter-log' ) && !IP::isValidRange( $username ) ) {
 			$linkRenderer = $sp->getLinkRenderer();
@@ -724,16 +762,6 @@ class AbuseFilterHooks {
 		array $props, $summary, $text, &$error
 	) {
 		$title = $upload->getTitle();
-		if ( $title === null ) {
-			// At this point, it shouldn't happen. If it does, all title variables would be
-			// null and thus useless. In the past we would just avoid computing those variables,
-			// but this could lead to unexpected behaviours, both frontend and backend: for the former,
-			// filters using title vars didn't correctly handle the title; as for the backend,
-			// AbuseFilter::filterAction didn't expect $title to be null and could throw any kind of errors.
-			$logger = LoggerFactory::getInstance( 'AbuseFilter' );
-			$logger->debug( 'AbuseFilterHooks::filterUpload received an invalid title.' );
-			return true;
-		}
 
 		$vars = new AbuseFilterVariableHolder;
 		$vars->addHolders(
@@ -792,7 +820,7 @@ class AbuseFilterHooks {
 			$vars->addHolders( AbuseFilter::getEditVars( $title, $page ) );
 		}
 
-		$filter_result = AbuseFilter::filterAction( $vars, $title );
+		$filter_result = AbuseFilter::filterAction( $vars, $title, 'default', $user );
 
 		if ( !$filter_result->isOK() ) {
 			$messageAndParams = $filter_result->getErrorsArray()[0];
@@ -813,7 +841,7 @@ class AbuseFilterHooks {
 	 * @param array &$vars
 	 */
 	public static function onMakeGlobalVariablesScript( array &$vars ) {
-		if ( isset( AbuseFilter::$editboxName ) ) {
+		if ( isset( AbuseFilter::$editboxName ) && AbuseFilter::$editboxName !== null ) {
 			$vars['abuseFilterBoxName'] = AbuseFilter::$editboxName;
 		}
 

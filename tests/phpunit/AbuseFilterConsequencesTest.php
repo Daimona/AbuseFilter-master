@@ -49,7 +49,8 @@ class AbuseFilterConsequencesTest extends MediaWikiTestCase {
 		'abuse_filter_action',
 		'abuse_filter_history',
 		'abuse_filter_log',
-		'page'
+		'page',
+		'ipblocks',
 	];
 
 	// Properties of the filter rows that we're not interested in changing.
@@ -384,7 +385,6 @@ class AbuseFilterConsequencesTest extends MediaWikiTestCase {
 		$ep = new EditPage( $article );
 		$ep->setContextTitle( $title );
 		$ep->importFormData( $req );
-		$result = [];
 		return $ep->internalAttemptSave( $result );
 	}
 
@@ -454,13 +454,14 @@ class AbuseFilterConsequencesTest extends MediaWikiTestCase {
 			$actions = $filter['actions'];
 			unset( $filter['actions'] );
 
-			$dbw->insert(
+			$dbw->replace(
 				'abuse_filter',
+				[ 'af_id' ],
 				$filter,
 				__METHOD__
 			);
 
-			$actionsRows = [];
+			$actionRows = [];
 			foreach ( array_filter( $wgAbuseFilterActions ) as $action => $_ ) {
 				if ( isset( $actions[$action] ) ) {
 					$parameters = $actions[$action];
@@ -474,8 +475,9 @@ class AbuseFilterConsequencesTest extends MediaWikiTestCase {
 				}
 			}
 
-			$dbw->insert(
+			$dbw->replace(
 				'abuse_filter_action',
+				[ 'afa_filter' ],
 				$actionsRows,
 				__METHOD__
 			);
@@ -534,7 +536,7 @@ class AbuseFilterConsequencesTest extends MediaWikiTestCase {
 		foreach ( $consequences as $consequence => $ids ) {
 			foreach ( $ids as $id ) {
 				$params = self::$filters[$id]['actions'][$consequence];
-
+				$success = true;
 				switch ( $consequence ) {
 					case 'warn':
 						// Aborts the hook with the warning message as error.

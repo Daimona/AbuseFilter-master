@@ -14,7 +14,7 @@ abstract class AbuseFilterView extends ContextSource {
 	 * @param SpecialAbuseFilter $page
 	 * @param array $params
 	 */
-	public function __construct( SpecialAbuseFilter $page, $params ) {
+	public function __construct( $page, $params ) {
 		$this->mPage = $page;
 		$this->mParams = $params;
 		$this->setContext( $this->mPage->getContext() );
@@ -38,8 +38,10 @@ abstract class AbuseFilterView extends ContextSource {
 	 * @return bool
 	 */
 	public function canEdit() {
+		$block = $this->getUser()->getBlock();
+
 		return (
-			!$this->getUser()->isBlocked() &&
+			!( $block && $block->isSitewide() ) &&
 			$this->getUser()->isAllowed( 'abusefilter-modify' )
 		);
 	}
@@ -242,7 +244,7 @@ abstract class AbuseFilterView extends ContextSource {
 				return $db->makeList( [
 					'rc_source' => RecentChange::SRC_LOG,
 					'rc_log_type' => 'newusers',
-					'rc_log_action' => 'create'
+					'rc_log_action' => [ 'create', 'autocreate' ]
 				], LIST_AND );
 			case 'delete':
 				return $db->makeList( [
@@ -251,8 +253,6 @@ abstract class AbuseFilterView extends ContextSource {
 					'rc_log_action' => 'delete'
 				], LIST_AND );
 			// @ToDo: case 'upload'
-			default:
-				throw new MWException( __METHOD__ . ' called with invalid action: ' . $action );
 		}
 
 		return $db->makeList( [
@@ -269,7 +269,7 @@ abstract class AbuseFilterView extends ContextSource {
 					], LIST_AND ),
 					$db->makeList( [
 						'rc_log_type' => 'newusers',
-						'rc_log_action' => 'create'
+						'rc_log_action' => [ 'create', 'autocreate' ]
 					], LIST_AND ),
 					$db->makeList( [
 						'rc_log_type' => 'delete',

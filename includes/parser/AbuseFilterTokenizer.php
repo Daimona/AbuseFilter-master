@@ -245,7 +245,7 @@ class AbuseFilterTokenizer {
 
 						if ( preg_match( '/^[0-9A-Fa-f]{2}$/', $chr ) ) {
 							$chr = base_convert( $chr, 16, 10 );
-							$token .= chr( (int)$chr );
+							$token .= chr( $chr );
 							// \xXX -- 2 done later
 							$offset += 2;
 						} else {

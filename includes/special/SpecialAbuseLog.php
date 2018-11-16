@@ -95,6 +95,7 @@ class SpecialAbuseLog extends SpecialPage {
 			return;
 		}
 
+		$detailsid = $request->getIntOrNull( 'details' );
 		$hideid = $request->getIntOrNull( 'hide' );
 		$args = explode( '/', $parameter );
 
@@ -518,30 +519,35 @@ class SpecialAbuseLog extends SpecialPage {
 			[ 'abuse_filter' => [ 'LEFT JOIN', 'af_id=afl_filter' ] ]
 		);
 
-		$error = null;
 		if ( !$row ) {
-			$error = 'abusefilter-log-nonexistent';
-		} else {
-			if ( AbuseFilter::decodeGlobalName( $row->afl_filter ) ) {
-				$filter_hidden = null;
-			} else {
-				$filter_hidden = $row->af_hidden;
-			}
+			$out->addWikiMsg( 'abusefilter-log-nonexistent' );
 
-			if ( !self::canSeeDetails( $row->afl_filter, $filter_hidden ) ) {
-				$error = 'abusefilter-log-cannot-see-details';
-			} elseif ( self::isHidden( $row ) === true && !self::canSeeHidden() ) {
-				$error = 'abusefilter-log-details-hidden';
-			} elseif ( self::isHidden( $row ) === 'implicit' &&
-				!$this->getUser()->isAllowed( 'deletedtext' ) ) {
-				// The log is visible, but refers to a deleted revision
-				$error = 'abusefilter-log-details-hidden-implicit';
-			}
+			return;
 		}
 
-		if ( $error ) {
-			$out->addWikiMsg( $error );
+		if ( AbuseFilter::decodeGlobalName( $row->afl_filter ) ) {
+			$filter_hidden = null;
+		} else {
+			$filter_hidden = $row->af_hidden;
+		}
+
+		if ( !self::canSeeDetails( $row->afl_filter, $filter_hidden ) ) {
+			$out->addWikiMsg( 'abusefilter-log-cannot-see-details' );
+
 			return;
+		}
+
+		if ( self::isHidden( $row ) === true && !self::canSeeHidden() ) {
+			$out->addWikiMsg( 'abusefilter-log-details-hidden' );
+
+			return;
+		} elseif ( self::isHidden( $row ) === 'implicit' ) {
+			$rev = Revision::newFromId( $row->afl_rev_id );
+			// The log is visible, but refers to a deleted revision
+			if ( !$rev->userCan( Revision::SUPPRESSED_ALL, $this->getUser() ) ) {
+				$out->addWikiMsg( 'abusefilter-log-details-hidden-implicit' );
+				return;
+			}
 		}
 
 		$output = Xml::element(
@@ -651,25 +657,27 @@ class SpecialAbuseLog extends SpecialPage {
 			[ 'abuse_filter' => [ 'LEFT JOIN', 'af_id=afl_filter' ] ]
 		);
 
-		$error = null;
 		if ( !$row ) {
-			$error = 'abusefilter-log-nonexistent';
-		} else {
-			if ( AbuseFilter::decodeGlobalName( $row->afl_filter ) ) {
-				$filter_hidden = null;
-			} else {
-				$filter_hidden = $row->af_hidden;
-			}
+			$out->addWikiMsg( 'abusefilter-log-nonexistent' );
 
-			if ( !self::canSeeDetails( $row->afl_filter, $filter_hidden ) ) {
-				$error = 'abusefilter-log-cannot-see-details';
-			} elseif ( !self::canSeePrivate() ) {
-				$error = 'abusefilter-log-cannot-see-private-details';
-			}
+			return;
 		}
 
-		if ( $error ) {
-			$out->addWikiMsg( $error );
+		if ( AbuseFilter::decodeGlobalName( $row->afl_filter ) ) {
+			$filter_hidden = null;
+		} else {
+			$filter_hidden = $row->af_hidden;
+		}
+
+		if ( !self::canSeeDetails( $row->afl_filter, $filter_hidden ) ) {
+			$out->addWikiMsg( 'abusefilter-log-cannot-see-details' );
+
+			return;
+		}
+
+		if ( !self::canSeePrivate() ) {
+			$out->addWikiMsg( 'abusefilter-log-cannot-see-private-details' );
+
 			return;
 		}
 
@@ -835,7 +843,7 @@ class SpecialAbuseLog extends SpecialPage {
 	 * @param User $user The user who accessed the private details
 	 * @return void
 	 */
-	public static function addLogEntry( $logID, $reason, User $user ) {
+	public static function addLogEntry( $logID, $reason, $user ) {
 		$target = self::getTitleFor( 'AbuseLog', $logID );
 
 		$logEntry = new ManualLogEntry( 'abusefilterprivatedetails', 'access' );
@@ -1094,7 +1102,7 @@ class SpecialAbuseLog extends SpecialPage {
 	 *
 	 * @param stdClass $row The abuse_filter_log row object.
 	 *
-	 * @return Mixed true if the item is explicitly hidden, false if it is not.
+	 * @return bool|string true if the item is explicitly hidden, false if it is not.
 	 *    The string 'implicit' if it is hidden because the corresponding revision is hidden.
 	 */
 	public static function isHidden( $row ) {
